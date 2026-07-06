@@ -35,27 +35,29 @@ CREATE FUNCTION gnote.message_metadata_fts_trigger() RETURNS trigger
 DECLARE
   _lang_full TEXT;
 BEGIN
-  -- Маппинг ISO кодов в текстовые названия для поиска
-  _lang_full := CASE LOWER(NEW.language)
+  _lang_full := CASE LOWER(COALESCE(NEW.language, ''))
     WHEN 'he' THEN 'hebrew ivrit иврит'
     WHEN 'ru' THEN 'russian русский russkiy'
-    WHEN 'en' THEN 'english английский inglish'
+    WHEN 'en' THEN 'english английский'
     WHEN 'zh' THEN 'chinese китайский'
-    WHEN 'es' THEN 'spanish испанский'
-    WHEN 'fr' THEN 'french французский'
-    WHEN 'de' THEN 'german немецкий'
     ELSE ''
   END;
 
-  -- Сборка fts_vector (учитываем, что keywords — это JSONB)
-  NEW.fts_vector := 
+  NEW.fts_vector :=
     setweight(to_tsvector('simple', COALESCE(NEW.summary, '')), 'A') ||
     setweight(to_tsvector('simple', COALESCE(NEW.category, '')), 'B') ||
     setweight(to_tsvector('simple', COALESCE(NEW.detected_type, '')), 'B') ||
-    setweight(to_tsvector('simple', COALESCE(_lang_full, '')), 'A') || 
+    setweight(to_tsvector('simple', COALESCE(_lang_full, '')), 'A') ||
     setweight(to_tsvector('simple', COALESCE(NEW.language, '')), 'B') ||
-    setweight(jsonb_to_tsvector('simple', COALESCE(NEW.keywords, '[]'::jsonb), '["string"]'), 'A');
-    
+
+    -- user custom keywords only
+    setweight(jsonb_to_tsvector('simple', COALESCE(NEW.keywords, '[]'::jsonb), '["string"]'), 'A') ||
+
+    setweight(jsonb_to_tsvector('simple', COALESCE(NEW.entities, '[]'::jsonb), '["string"]'), 'A') ||
+    setweight(jsonb_to_tsvector('simple', COALESCE(NEW.important_details, '[]'::jsonb), '["string"]'), 'A') ||
+    setweight(jsonb_to_tsvector('simple', COALESCE(NEW.business_card_data, '{}'::jsonb), '["string"]'), 'A') ||
+    setweight(to_tsvector('simple', COALESCE(NEW.ai_content, '')), 'C');
+
   RETURN NEW;
 END;
 $$;
@@ -233,6 +235,7 @@ CREATE TABLE gnote.message_ai_metadata (
     model_name text DEFAULT 'gemini'::text,
     entities jsonb DEFAULT '[]'::jsonb,
     fts_vector tsvector,
+    business_card_data jsonb,
     CONSTRAINT chk_message_ai_metadata_source_status CHECK ((source_status = ANY (ARRAY['pending'::text, 'active'::text, 'deleted'::text, 'failed'::text, 'orphan'::text])))
 );
 
